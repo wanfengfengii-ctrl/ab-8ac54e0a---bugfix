@@ -21,6 +21,12 @@ variance′ = variance − βᵀ M⁻¹ β
 M = H Σ Hᵀ + R,  β = H Σ c
 ```
 
+`M` may be singular (redundant or noiseless references make it degenerate).
+The service then solves `M y = β` and `M w = z − H x` exactly instead of
+inverting `M`; `β` always lies in the column space of `M`, so the
+conditional result is still unique whenever the observations are mutually
+consistent.
+
 **All arithmetic is exact** (`fractions.Fraction`). No floating point value is
 ever produced on the decision path, so the budget verdict cannot be shifted
 by rounding or tolerance tricks.
@@ -69,11 +75,14 @@ by rounding or tolerance tricks.
 * `covariance` — `m × m` reference noise covariance (R) for the `m`
   observations. Must be exactly symmetric and positive semidefinite.
 
-The joint observation covariance `M = H Σ Hᵀ + R` must be invertible;
-otherwise the reference information does not determine a unique conditional
-result and the whole request is rejected (`CONDITIONING_SINGULAR`). Any
-reference-observation error yields a stable error code and field path and
-never a release verdict.
+The joint observation covariance `M = H Σ Hᵀ + R` does **not** need to be
+invertible.  When it is singular but the degenerate observations are
+mutually consistent — the residual `z − H x` lies in the column space of
+`M` — the conditional estimate and variance are still uniquely determined
+and the request succeeds.  The request is rejected
+(`CONDITIONING_SINGULAR`) only when the observations contradict each other
+or no unique conditional result exists.  Any reference-observation error
+yields a stable error code and field path and never a release verdict.
 
 **Rational format** (applies everywhere): a JSON integer (`3`, `"-7"`) or a
 string `"p/q"` in **lowest terms** with a **positive** denominator
@@ -114,7 +123,7 @@ failed request can never be mistaken for a release decision.
 | `CONDITIONING_DIMENSION_MISMATCH` | Conditioning covariance is not `m × m` for `m` observations |
 | `CONDITIONING_COVARIANCE_NOT_SYMMETRIC` | `conditioning.covariance[i][j] ≠ conditioning.covariance[j][i]` |
 | `CONDITIONING_COVARIANCE_NOT_POSITIVE_SEMIDEFINITE` | Exact LDLᵀ check on the reference noise covariance failed at the reported pivot |
-| `CONDITIONING_SINGULAR` | `H Σ Hᵀ + R` is singular: the reference observations do not determine a unique conditional result |
+| `CONDITIONING_SINGULAR` | The reference observations are mutually contradictory (degenerate `H Σ Hᵀ + R` with the residual `z − H x` outside its column space) or otherwise do not determine a unique conditional result |
 | `PAYLOAD_TOO_LARGE` | Body exceeds 1 MiB (HTTP 413) |
 | `METHOD_NOT_ALLOWED` | Wrong HTTP method (HTTP 405) |
 | `NOT_FOUND` | Unknown path (HTTP 404) |
@@ -140,8 +149,9 @@ receive requests.
 The `verify` service waits for `api` to be healthy, then runs the unit
 tests, the application build (byte-compile + import check) and HTTP smoke
 tests covering valid and invalid covariance matrices, requests without
-conditioning (compatible), valid conditioning and degenerate reference
-combinations. It prints a summary and exits with code 0 on success, 1 on
+conditioning (compatible), valid conditioning, redundant degenerate
+reference combinations (accepted) and contradictory degenerate observations
+(rejected). It prints a summary and exits with code 0 on success, 1 on
 failure:
 
 ```sh
@@ -162,6 +172,7 @@ API_PORT=8000 python3 -m app.server    # run
 app/
   rational.py   strict rational parsing (integer or reduced p/q, q > 0)
   matrix.py     exact symmetry check, exact PSD test (LDLᵀ), exact inverse
+                and exact linear-system solve
   service.py    estimate / variance propagation + exact conditioning
   api.py        request validation -> stable error codes + field paths
   server.py     stdlib HTTP server (threaded), /healthz + evaluate

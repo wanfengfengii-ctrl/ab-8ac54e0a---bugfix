@@ -390,7 +390,10 @@ class ConditioningValidationTests(ApiTestCase):
             status, body, "CONDITIONING_COVARIANCE_NOT_POSITIVE_SEMIDEFINITE",
             "conditioning.covariance[1][1]")
 
-    def test_duplicate_noiseless_observations_singular(self):
+    def test_duplicate_noiseless_observations_are_redundant(self):
+        # Same reference information recorded twice under different ids:
+        # degenerate but consistent, so the verdict is the one a single
+        # noiseless observation of x1 = 2 would give.
         status, body = self.post(
             "/api/uncertainty/evaluate",
             self.conditioned({
@@ -398,10 +401,70 @@ class ConditioningValidationTests(ApiTestCase):
                                  self.observation(id="r2", value="2")],
                 "covariance": [["0", "0"], ["0", "0"]],
             }))
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {
+            "estimate": "9/2",
+            "variance": "7/144",
+            "exceeds_budget": False,
+        })
+
+    def test_consistent_degenerate_observations_succeed(self):
+        # Lab scenario: one input, zero intercept and budget, and two
+        # identical noiseless records of it (different ids, zero reference
+        # noise covariance).  Redundant, not uncertain.
+        status, body = self.post("/api/uncertainty/evaluate", {
+            "inputs": [{"id": "x", "value": "0", "sensitivity": "1"}],
+            "covariance": [["1"]],
+            "intercept": "0",
+            "variance_budget": "0",
+            "conditioning": {
+                "observations": [
+                    {"id": "r1", "value": "2", "coefficients": {"x": "1"}},
+                    {"id": "r2", "value": "2", "coefficients": {"x": "1"}},
+                ],
+                "covariance": [["0", "0"], ["0", "0"]],
+            },
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {
+            "estimate": "2",
+            "variance": "0",
+            "exceeds_budget": False,
+        })
+
+    def test_consistent_noiseless_observation_without_variance(self):
+        # Zero input variance and a noiseless observation that agrees with
+        # it: degenerate but consistent, result fully determined.
+        payload = {
+            "inputs": [{"id": "a", "value": "1", "sensitivity": "1"}],
+            "covariance": [["0"]],
+            "intercept": "0",
+            "variance_budget": "0",
+            "conditioning": {
+                "observations": [
+                    {"id": "r1", "value": "1", "coefficients": {"a": "1"}},
+                ],
+                "covariance": [["0"]],
+            },
+        }
+        status, body = self.post("/api/uncertainty/evaluate", payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {
+            "estimate": "1", "variance": "0", "exceeds_budget": False})
+
+    def test_contradictory_noiseless_observations_singular(self):
+        # Noiseless duplicates that disagree cannot both be true.
+        status, body = self.post(
+            "/api/uncertainty/evaluate",
+            self.conditioned({
+                "observations": [self.observation(),
+                                 self.observation(id="r2", value="3")],
+                "covariance": [["0", "0"], ["0", "0"]],
+            }))
         self.assert_error(status, body, "CONDITIONING_SINGULAR",
                           "conditioning")
 
-    def test_noiseless_observation_without_variance_singular(self):
+    def test_noiseless_observation_contradicting_zero_variance_singular(self):
         payload = {
             "inputs": [{"id": "a", "value": "1", "sensitivity": "1"}],
             "covariance": [["0"]],
@@ -409,7 +472,7 @@ class ConditioningValidationTests(ApiTestCase):
             "variance_budget": "1",
             "conditioning": {
                 "observations": [
-                    {"id": "r1", "value": "1", "coefficients": {"a": "1"}},
+                    {"id": "r1", "value": "2", "coefficients": {"a": "1"}},
                 ],
                 "covariance": [["0"]],
             },

@@ -6,9 +6,10 @@ Runs, in order:
   2. application build -- byte-compile + import check of the application
   3. HTTP smoke      -- valid and invalid covariance requests, requests
                         without conditioning (compatible), with valid
-                        conditioning and with degenerate reference
-                        combinations against the already-healthy API
-                        container
+                        conditioning, with redundant degenerate reference
+                        combinations (accepted) and with contradictory
+                        degenerate observations (rejected) against the
+                        already-healthy API container
 
 Every step is recorded; the process exits 0 only if all steps pass.
 """
@@ -238,14 +239,48 @@ def run_step_smoke() -> bool:
         dict(conditioned, variance_budget="1/2"),
         {"estimate": "95/24", "variance": "61/96", "exceeds_budget": True})
 
-    # Degenerate reference combination: two identical noiseless observations
-    # make H*S*H^T + R singular, so no unique conditional result exists.
-    ok &= check_error(
-        "smoke: degenerate reference combination rejected",
+    # Redundant reference combination: two identical noiseless observations
+    # (different ids, same content) make H*S*H^T + R singular but stay
+    # mutually consistent, so the unique conditional verdict is returned --
+    # the same one a single noiseless observation of x1 = 2 would give.
+    ok &= check_success(
+        "smoke: redundant noiseless observations accepted",
         dict(VALID_PAYLOAD, conditioning={
             "observations": [
                 {"id": "r1", "value": "2", "coefficients": {"x1": "1"}},
                 {"id": "r2", "value": "2", "coefficients": {"x1": "1"}},
+            ],
+            "covariance": [["0", "0"], ["0", "0"]],
+        }),
+        {"estimate": "9/2", "variance": "7/144", "exceeds_budget": False})
+
+    # Lab scenario: one input, zero intercept and variance budget, and two
+    # identical noiseless records of it under a zero reference covariance.
+    ok &= check_success(
+        "smoke: duplicate noiseless reference records accepted",
+        {
+            "inputs": [{"id": "x", "value": "0", "sensitivity": "1"}],
+            "covariance": [["1"]],
+            "intercept": "0",
+            "variance_budget": "0",
+            "conditioning": {
+                "observations": [
+                    {"id": "r1", "value": "2", "coefficients": {"x": "1"}},
+                    {"id": "r2", "value": "2", "coefficients": {"x": "1"}},
+                ],
+                "covariance": [["0", "0"], ["0", "0"]],
+            },
+        },
+        {"estimate": "2", "variance": "0", "exceeds_budget": False})
+
+    # Degenerate reference combination: two noiseless observations that
+    # contradict each other admit no conditional result.
+    ok &= check_error(
+        "smoke: contradictory degenerate observations rejected",
+        dict(VALID_PAYLOAD, conditioning={
+            "observations": [
+                {"id": "r1", "value": "2", "coefficients": {"x1": "1"}},
+                {"id": "r2", "value": "3", "coefficients": {"x1": "1"}},
             ],
             "covariance": [["0", "0"], ["0", "0"]],
         }),

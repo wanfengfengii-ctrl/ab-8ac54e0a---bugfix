@@ -59,6 +59,49 @@ def invert(matrix: Sequence[Sequence[Fraction]]) -> Optional[Matrix]:
     return [row[n:] for row in aug]
 
 
+def solve(matrix: Sequence[Sequence[Fraction]],
+          rhs: Sequence[Fraction]) -> Optional[List[Fraction]]:
+    """Return a vector ``x`` with ``matrix @ x == rhs``, or ``None``.
+
+    Uses the same exact Gauss-Jordan elimination as :func:`invert`.  When the
+    system is underdetermined the free variables are set to zero, yielding
+    one particular solution; for any ``beta`` in the row space of ``matrix``
+    the dot product ``beta . x`` is then independent of that choice.  Returns
+    ``None`` when the system is inconsistent, i.e. ``rhs`` has a component
+    outside the column space of ``matrix``.
+    """
+    n = len(matrix)
+    aug = [list(matrix[i]) + [rhs[i]] for i in range(n)]
+    pivot_columns: List[int] = []
+    for col in range(n):
+        row = len(pivot_columns)
+        pivot_row = None
+        for r in range(row, n):
+            if aug[r][col] != 0:
+                pivot_row = r
+                break
+        if pivot_row is None:
+            continue
+        if pivot_row != row:
+            aug[row], aug[pivot_row] = aug[pivot_row], aug[row]
+        inv_pivot = 1 / aug[row][col]
+        aug[row] = [value * inv_pivot for value in aug[row]]
+        for r in range(n):
+            if r != row and aug[r][col] != 0:
+                factor = aug[r][col]
+                aug[r] = [a - factor * b for a, b in zip(aug[r], aug[row])]
+        pivot_columns.append(col)
+    # Rows below the pivots are zero on the left; a nonzero right-hand side
+    # there means the system is inconsistent.
+    for r in range(len(pivot_columns), n):
+        if aug[r][n] != 0:
+            return None
+    particular = [Fraction(0)] * n
+    for row, col in enumerate(pivot_columns):
+        particular[col] = aug[row][n]
+    return particular
+
+
 def psd_failure_index(matrix: Sequence[Sequence[Fraction]]) -> Optional[int]:
     """Exact PSD test via LDL^T (symmetric Gaussian elimination).
 

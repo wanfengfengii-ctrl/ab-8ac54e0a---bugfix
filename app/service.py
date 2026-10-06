@@ -12,6 +12,13 @@ result by exact linear conditioning on the joint model:
     variance' = variance - B^T M^-1 B
     M = H S H^T + R,  B = H S c
 
+When M is singular (redundant or noiseless observations make it degenerate)
+the systems M y = B and M w = z - H x are solved exactly instead of inverting
+M.  B always lies in the column space of M (the joint covariance of
+observations and output is PSD), and B^T times any solution is constant over
+the solution set, so the conditional result is still unique whenever the
+observed values are mutually consistent.
+
 Everything is computed with :class:`fractions.Fraction`; no floating point
 value is ever produced, so the budget verdict is exact.
 """
@@ -20,7 +27,7 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import List, Optional, Sequence, Tuple
 
-from .matrix import Matrix, invert
+from .matrix import Matrix, solve
 
 
 def propagate(values: Sequence[Fraction],
@@ -63,12 +70,15 @@ def condition(values: Sequence[Fraction],
     the m observed values z and ``ref_covariance`` the m x m reference noise
     covariance R.  Conditioning is exact::
 
-        estimate' = estimate + B^T M^-1 (z - H x)
-        variance' = variance - B^T M^-1 B
-        M = H S H^T + R,  B = H S c
+        estimate' = estimate + B^T w,   variance' = variance - B^T y
+        M = H S H^T + R,  B = H S c,  M w = z - H x,  M y = B
 
-    Returns ``None`` when M is singular: the reference information then does
-    not determine a unique conditional result.
+    A singular M (degenerate reference observations) is not by itself a
+    failure: the conditional estimate and variance are still uniquely
+    determined when the observations are mutually consistent.  Returns
+    ``None`` when the observations contradict each other (the residual
+    z - H x lies outside the column space of M) or the system otherwise
+    admits no unique conditional result.
     """
     estimate, variance = propagate(values, sensitivities, covariance, intercept)
 
@@ -105,10 +115,6 @@ def condition(values: Sequence[Fraction],
             if row_a[j] and sensitivities[j]:
                 beta[k] += row_a[j] * sensitivities[j]
 
-    m_inverse = invert(m_matrix)
-    if m_inverse is None:
-        return None
-
     # residual r = z - H x (m-vector).
     residual: List[Fraction] = []
     for k in range(m):
@@ -119,19 +125,22 @@ def condition(values: Sequence[Fraction],
                 r -= row_h[j] * values[j]
         residual.append(r)
 
-    # estimate' = estimate + beta^T M^-1 r; variance' = variance - beta^T M^-1 beta.
+    # Solve M y = beta and M w = r instead of inverting M.  beta is a cross-
+    # covariance of the joint model, so it always lies in the column space of
+    # M; the residual does exactly when the (possibly degenerate) observations
+    # are mutually consistent.  beta^T is constant over each solution set, so
+    # the conditional result below is unique.
+    solved_beta = solve(m_matrix, beta)
+    solved_residual = solve(m_matrix, residual)
+    if solved_beta is None or solved_residual is None:
+        return None
+
+    # estimate' = estimate + beta^T w; variance' = variance - beta^T y.
     for k in range(m):
         if not beta[k]:
             continue
-        alpha = Fraction(0)   # (M^-1 r)_k
-        gamma = Fraction(0)   # (M^-1 beta)_k
-        row_inv = m_inverse[k]
-        for l in range(m):
-            if row_inv[l]:
-                if residual[l]:
-                    alpha += row_inv[l] * residual[l]
-                if beta[l]:
-                    gamma += row_inv[l] * beta[l]
-        estimate += beta[k] * alpha
-        variance -= beta[k] * gamma
+        if solved_residual[k]:
+            estimate += beta[k] * solved_residual[k]
+        if solved_beta[k]:
+            variance -= beta[k] * solved_beta[k]
     return estimate, variance

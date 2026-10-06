@@ -122,23 +122,63 @@ class ConditionTests(unittest.TestCase):
         )
         self.assertEqual((estimate, variance), (F(41, 12), F(11, 9)))
 
-    def test_duplicate_noiseless_observations_are_singular(self):
-        # Two identical observations with zero noise: M is rank one.
-        self.assertIsNone(self.condition(
+    def test_duplicate_noiseless_observations_are_redundant(self):
+        # Two identical noiseless observations (rank-one M): consistent, so
+        # the second record adds nothing and the result equals conditioning
+        # on a single one (estimate 9/2, variance 7/144).
+        estimate, variance = self.condition(
             ref_values=[F(2), F(2)],
             ref_rows=[[F(1), F(0)], [F(1), F(0)]],
             ref_covariance=[[F(0), F(0)], [F(0), F(0)]],
-        ))
+        )
+        self.assertEqual(estimate, F(9, 2))
+        self.assertEqual(variance, F(7, 144))
 
-    def test_noiseless_observation_without_variance_is_singular(self):
-        # x2 has no variance in the direction observed (zero row of S) and
-        # the observation is noiseless, so M = 0.
-        self.assertIsNone(condition(
+    def test_duplicate_noiseless_matches_single_observation(self):
+        single = self.condition(
+            ref_values=[F(2)],
+            ref_rows=[[F(1), F(0)]],
+            ref_covariance=[[F(0)]],
+        )
+        duplicate = self.condition(
+            ref_values=[F(2), F(2)],
+            ref_rows=[[F(1), F(0)], [F(1), F(0)]],
+            ref_covariance=[[F(0), F(0)], [F(0), F(0)]],
+        )
+        self.assertEqual(single, duplicate)
+
+    def test_consistent_noiseless_observation_without_variance(self):
+        # x has no variance and the noiseless observation agrees with it:
+        # the degenerate system is consistent and the result is determined.
+        estimate, variance = condition(
             values=[F(1)],
             sensitivities=[F(1)],
             covariance=[[F(0)]],
             intercept=F(0),
             ref_values=[F(1)],
+            ref_rows=[[F(1)]],
+            ref_covariance=[[F(0)]],
+        )
+        self.assertEqual((estimate, variance), (F(1), F(0)))
+
+    def test_contradictory_noiseless_observations_are_singular(self):
+        # Two noiseless observations of the same quantity disagree: the
+        # residual leaves the column space of M, so no result exists.
+        self.assertIsNone(self.condition(
+            ref_values=[F(2), F(3)],
+            ref_rows=[[F(1), F(0)], [F(1), F(0)]],
+            ref_covariance=[[F(0), F(0)], [F(0), F(0)]],
+        ))
+
+    def test_noiseless_observation_contradicting_zero_variance_is_singular(self):
+        # x has no variance (x = 1 for sure) but the noiseless observation
+        # says 2: contradictory, no conditional result.
+        self.assertIsNone(condition(
+            values=[F(1)],
+            sensitivities=[F(1)],
+            covariance=[[F(0)]],
+            intercept=F(0),
+            ref_values=[F(2)],
             ref_rows=[[F(1)]],
             ref_covariance=[[F(0)]],
         ))

@@ -1,7 +1,7 @@
 import unittest
 from fractions import Fraction as F
 
-from app.matrix import check_symmetric, invert, psd_failure_index
+from app.matrix import check_symmetric, invert, psd_failure_index, solve
 
 
 def m(rows):
@@ -90,6 +90,48 @@ class InvertTests(unittest.TestCase):
         self.assertIsNone(invert(m([[1, 2], [2, 4]])))
         self.assertIsNone(invert(m([[1, 1], [1, 1]])))
         self.assertIsNone(invert(m([[0, 0], [0, 5]])))
+
+
+class SolveTests(unittest.TestCase):
+    def test_identity(self):
+        self.assertEqual(solve(m([[1, 0], [0, 1]]), [F(3), F(-2)]),
+                         [F(3), F(-2)])
+
+    def test_general_exact(self):
+        # [[2, 1], [1, 2]] x = [1, 2]  ->  x = [0, 1]
+        self.assertEqual(solve(m([[2, 1], [1, 2]]), [F(1), F(2)]),
+                         [F(0), F(1)])
+
+    def test_requires_pivoting(self):
+        self.assertEqual(solve(m([[0, 1], [1, 0]]), [F(5), F(7)]),
+                         [F(7), F(5)])
+
+    def test_exact_fraction(self):
+        self.assertEqual(solve([[F(1, 2)]], [F(1, 3)]), [F(2, 3)])
+
+    def test_singular_consistent_particular_solution(self):
+        # [[1, 1], [1, 1]] x = [2, 2]: underdetermined but consistent.
+        result = solve(m([[1, 1], [1, 1]]), [F(2), F(2)])
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0] + result[1], F(2))
+
+    def test_singular_consistent_dot_product_is_unique(self):
+        # For beta in the row space, beta . x is the same for every
+        # solution, so the particular solution returned is enough.
+        result = solve(m([[1, 1], [1, 1]]), [F(2), F(2)])
+        beta = [F(3), F(3)]
+        self.assertEqual(sum(b * x for b, x in zip(beta, result)), F(6))
+
+    def test_zero_matrix_zero_rhs(self):
+        self.assertEqual(solve(m([[0]]), [F(0)]), [F(0)])
+        self.assertEqual(solve(m([[0, 0], [0, 0]]), [F(0), F(0)]),
+                         [F(0), F(0)])
+
+    def test_inconsistent_returns_none(self):
+        self.assertIsNone(solve(m([[0]]), [F(1)]))
+        self.assertIsNone(solve(m([[1, 1], [1, 1]]), [F(2), F(3)]))
+        self.assertIsNone(solve(m([[0, 0], [0, 0]]), [F(0), F(1)]))
+        self.assertIsNone(solve(m([[1, 2], [2, 4]]), [F(1), F(3)]))
 
 
 if __name__ == "__main__":
