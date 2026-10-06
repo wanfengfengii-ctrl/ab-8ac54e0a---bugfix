@@ -202,6 +202,77 @@ class ConditioningSuccessTests(ApiTestCase):
         self.assertEqual(body["estimate"], "41/12")
         self.assertEqual(body["variance"], "61/96")
 
+    def test_redundant_noiseless_observations_with_different_ids(self):
+        # The same reference information recorded twice under different ids
+        # (r1, r2), both noiseless: M is singular but the records agree, so
+        # the conditional result is uniquely determined.
+        payload = {
+            "inputs": [{"id": "x", "value": 0, "sensitivity": 1}],
+            "covariance": [[1]],
+            "intercept": 0,
+            "variance_budget": 0,
+            "conditioning": {
+                "observations": [
+                    {"id": "r1", "value": "2", "coefficients": {"x": "1"}},
+                    {"id": "r2", "value": "2", "coefficients": {"x": "1"}},
+                ],
+                "covariance": [["0", "0"], ["0", "0"]],
+            },
+        }
+        status, body = self.post("/api/uncertainty/evaluate", payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {
+            "estimate": "2", "variance": "0", "exceeds_budget": False})
+
+    def test_redundant_noiseless_observations_match_single_one(self):
+        # Redundant records must give exactly the result of conditioning on
+        # a single noiseless observation of x1.
+        payload = dict(VALID_BODY, conditioning={
+            "observations": [
+                {"id": "r1", "value": "2", "coefficients": {"x1": "1"}},
+                {"id": "r2", "value": "2", "coefficients": {"x1": "1"}},
+            ],
+            "covariance": [["0", "0"], ["0", "0"]],
+        })
+        status, body = self.post("/api/uncertainty/evaluate", payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {
+            "estimate": "9/2", "variance": "7/144", "exceeds_budget": False})
+
+    def test_scaled_redundant_noiseless_observations_accepted(self):
+        # The second record restates the same fact with row and value doubled.
+        payload = dict(VALID_BODY, conditioning={
+            "observations": [
+                {"id": "r1", "value": "2", "coefficients": {"x1": "1"}},
+                {"id": "r2", "value": "4", "coefficients": {"x1": "2"}},
+            ],
+            "covariance": [["0", "0"], ["0", "0"]],
+        })
+        status, body = self.post("/api/uncertainty/evaluate", payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {
+            "estimate": "9/2", "variance": "7/144", "exceeds_budget": False})
+
+    def test_noiseless_observation_of_deterministic_value_accepted(self):
+        # Zero prior variance and zero noise, but the observation matches the
+        # deterministic value: compatible and a no-op (zero variance).
+        payload = {
+            "inputs": [{"id": "a", "value": "1", "sensitivity": "1"}],
+            "covariance": [["0"]],
+            "intercept": "0",
+            "variance_budget": "0",
+            "conditioning": {
+                "observations": [
+                    {"id": "r1", "value": "1", "coefficients": {"a": "1"}},
+                ],
+                "covariance": [["0"]],
+            },
+        }
+        status, body = self.post("/api/uncertainty/evaluate", payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {
+            "estimate": "1", "variance": "0", "exceeds_budget": False})
+
 
 class ConditioningValidationTests(ApiTestCase):
     def conditioned(self, conditioning):
@@ -390,18 +461,41 @@ class ConditioningValidationTests(ApiTestCase):
             status, body, "CONDITIONING_COVARIANCE_NOT_POSITIVE_SEMIDEFINITE",
             "conditioning.covariance[1][1]")
 
-    def test_duplicate_noiseless_observations_singular(self):
-        status, body = self.post(
-            "/api/uncertainty/evaluate",
-            self.conditioned({
-                "observations": [self.observation(),
-                                 self.observation(id="r2", value="2")],
-                "covariance": [["0", "0"], ["0", "0"]],
-            }))
-        self.assert_error(status, body, "CONDITIONING_SINGULAR",
-                          "conditioning")
 
-    def test_noiseless_observation_without_variance_singular(self):
+class ConditioningContradictionTests(ApiTestCase):
+    def conditioned(self, conditioning):
+        return dict(VALID_BODY, conditioning=conditioning)
+
+    def test_contradictory_noiseless_duplicates_rejected(self):
+        # Identical noiseless rows with different observed values contradict
+        # each other; no unique conditional result exists.
+        status, body = self.post("/api/uncertainty/evaluate", self.conditioned({
+            "observations": [
+                {"id": "r1", "value": "2", "coefficients": {"x1": "1"}},
+                {"id": "r2", "value": "3", "coefficients": {"x1": "1"}},
+            ],
+            "covariance": [["0", "0"], ["0", "0"]],
+        }))
+        self.assertEqual(status, 400)
+        error = body["error"]
+        self.assertEqual(error["code"], "CONDITIONING_SINGULAR")
+        self.assertEqual(error["field"], "conditioning")
+        for verdict_key in ("estimate", "variance", "exceeds_budget"):
+            self.assertNotIn(verdict_key, body)
+
+    def test_scaled_contradictory_noiseless_records_rejected(self):
+        status, body = self.post("/api/uncertainty/evaluate", self.conditioned({
+            "observations": [
+                {"id": "r1", "value": "2", "coefficients": {"x1": "1"}},
+                {"id": "r2", "value": "3", "coefficients": {"x1": "2"}},
+            ],
+            "covariance": [["0", "0"], ["0", "0"]],
+        }))
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "CONDITIONING_SINGULAR")
+        self.assertEqual(body["error"]["field"], "conditioning")
+
+    def test_noiseless_observation_of_deterministic_value_contradiction(self):
         payload = {
             "inputs": [{"id": "a", "value": "1", "sensitivity": "1"}],
             "covariance": [["0"]],
@@ -409,14 +503,15 @@ class ConditioningValidationTests(ApiTestCase):
             "variance_budget": "1",
             "conditioning": {
                 "observations": [
-                    {"id": "r1", "value": "1", "coefficients": {"a": "1"}},
+                    {"id": "r1", "value": "2", "coefficients": {"a": "1"}},
                 ],
                 "covariance": [["0"]],
             },
         }
         status, body = self.post("/api/uncertainty/evaluate", payload)
-        self.assert_error(status, body, "CONDITIONING_SINGULAR",
-                          "conditioning")
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "CONDITIONING_SINGULAR")
+        self.assertEqual(body["error"]["field"], "conditioning")
 
 
 class HealthAndRoutingTests(ApiTestCase):

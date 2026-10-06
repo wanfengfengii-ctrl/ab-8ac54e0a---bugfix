@@ -8,9 +8,15 @@ Given inputs x_i with sensitivities c_i, intercept b and covariance matrix S:
 Optional reference observations z = H x + e (e with covariance R) update the
 result by exact linear conditioning on the joint model:
 
-    estimate' = estimate + B^T M^-1 (z - H x)
-    variance' = variance - B^T M^-1 B
-    M = H S H^T + R,  B = H S c
+    estimate' = estimate + beta^T u
+    variance' = variance - beta^T w
+    M = H S H^T + R,  beta = H S c,
+    M u = z - H x,   M w = beta
+
+When M is invertible this is the usual formula with u = M^-1 (z - H x) and
+w = M^-1 beta.  A singular M is accepted as long as the degenerate
+observations are mutually consistent (z - H x lies in range(M)); only truly
+contradictory degenerate observations make the conditional result undefined.
 
 Everything is computed with :class:`fractions.Fraction`; no floating point
 value is ever produced, so the budget verdict is exact.
@@ -20,7 +26,7 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import List, Optional, Sequence, Tuple
 
-from .matrix import Matrix, invert
+from .matrix import Matrix, solve
 
 
 def propagate(values: Sequence[Fraction],
@@ -63,12 +69,32 @@ def condition(values: Sequence[Fraction],
     the m observed values z and ``ref_covariance`` the m x m reference noise
     covariance R.  Conditioning is exact::
 
-        estimate' = estimate + B^T M^-1 (z - H x)
-        variance' = variance - B^T M^-1 B
-        M = H S H^T + R,  B = H S c
+        estimate' = estimate + beta^T u
+        variance' = variance - beta^T w
+        M = H S H^T + R,  beta = H S c,
+        M u = z - H x,   M w = beta
 
-    Returns ``None`` when M is singular: the reference information then does
-    not determine a unique conditional result.
+    When ``M`` is invertible this is the usual Gaussian conditioning
+    formula (``u = M^-1 (z - H x)``, ``w = M^-1 beta``).
+
+    Degenerate (but consistent) references are accepted: ``M`` may be
+    singular because of redundant noiseless observations (e.g. the same
+    reference information recorded twice under different ids) or directions
+    without prior variance.  Since ``M`` is positive semidefinite, the
+    conditional estimate is unique exactly when the residual
+    ``z - H x`` lies in the column space of ``M``; the observations are
+    then mutually compatible.  Moreover ``beta = H S c`` always lies in
+    ``range(H S H^T) subset range(M)`` (for symmetric PSD S,
+    ``range(H S H^T) = range(H S^{1/2})`` and
+    ``beta = (H S^{1/2})(S^{1/2} c)``), so the variance update is uniquely
+    determined as well: both linear systems are consistent and their
+    possibly non-unique solutions all yield the same scalar result
+    ``beta^T u`` / ``beta^T w``.
+
+    Returns ``None`` when the residual system is inconsistent: a singular
+    ``M`` together with ``z - H x`` outside ``range(M)`` means the
+    degenerate observations contradict each other and no unique
+    conditional result exists.
     """
     estimate, variance = propagate(values, sensitivities, covariance, intercept)
 
@@ -105,10 +131,6 @@ def condition(values: Sequence[Fraction],
             if row_a[j] and sensitivities[j]:
                 beta[k] += row_a[j] * sensitivities[j]
 
-    m_inverse = invert(m_matrix)
-    if m_inverse is None:
-        return None
-
     # residual r = z - H x (m-vector).
     residual: List[Fraction] = []
     for k in range(m):
@@ -119,19 +141,23 @@ def condition(values: Sequence[Fraction],
                 r -= row_h[j] * values[j]
         residual.append(r)
 
-    # estimate' = estimate + beta^T M^-1 r; variance' = variance - beta^T M^-1 beta.
+    # M may be singular (redundant noiseless references).  The conditional
+    # estimate exists uniquely iff M u = r is consistent; the degenerate
+    # observations then agree instead of contradicting each other.  The
+    # variance system M w = beta is always consistent because beta lies in
+    # range(M), but it is checked defensively.
+    u = solve(m_matrix, residual)
+    if u is None:
+        return None
+    w = solve(m_matrix, beta)
+    if w is None:
+        return None
+
+    # estimate' = estimate + beta^T u; variance' = variance - beta^T w.
     for k in range(m):
-        if not beta[k]:
-            continue
-        alpha = Fraction(0)   # (M^-1 r)_k
-        gamma = Fraction(0)   # (M^-1 beta)_k
-        row_inv = m_inverse[k]
-        for l in range(m):
-            if row_inv[l]:
-                if residual[l]:
-                    alpha += row_inv[l] * residual[l]
-                if beta[l]:
-                    gamma += row_inv[l] * beta[l]
-        estimate += beta[k] * alpha
-        variance -= beta[k] * gamma
+        if beta[k]:
+            if u[k]:
+                estimate += beta[k] * u[k]
+            if w[k]:
+                variance -= beta[k] * w[k]
     return estimate, variance

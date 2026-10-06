@@ -59,6 +59,54 @@ def invert(matrix: Sequence[Sequence[Fraction]]) -> Optional[Matrix]:
     return [row[n:] for row in aug]
 
 
+def solve(matrix: Sequence[Sequence[Fraction]],
+          rhs: Sequence[Fraction]) -> Optional[List[Fraction]]:
+    """Solve ``A x = b`` exactly over the rationals.
+
+    The system need not be invertible: Gauss-Jordan elimination with row
+    pivoting reduces the augmented matrix to reduced row echelon form.  When
+    the system is consistent (``b`` lies in the column space of ``A``) a
+    particular solution is returned with every free variable set to zero.
+    Returns ``None`` when the system is inconsistent, i.e. elimination
+    produces a row that is zero on the coefficient side but non-zero on the
+    right-hand side.  All arithmetic is exact.
+    """
+    n = len(matrix)
+    aug: Matrix = [
+        list(matrix[i]) + [rhs[i]]
+        for i in range(n)
+    ]
+    pivot_cols: List[int] = []
+    pivot_row = 0
+    for col in range(n):
+        selected = None
+        for r in range(pivot_row, n):
+            if aug[r][col] != 0:
+                selected = r
+                break
+        if selected is None:
+            continue
+        if selected != pivot_row:
+            aug[pivot_row], aug[selected] = aug[selected], aug[pivot_row]
+        inv_pivot = 1 / aug[pivot_row][col]
+        aug[pivot_row] = [value * inv_pivot for value in aug[pivot_row]]
+        for r in range(n):
+            if r != pivot_row and aug[r][col] != 0:
+                factor = aug[r][col]
+                aug[r] = [a - factor * b for a, b in zip(aug[r], aug[pivot_row])]
+        pivot_cols.append(col)
+        pivot_row += 1
+    # Rows without a pivot are entirely zero in the coefficient block; their
+    # right-hand side must also be zero for the system to be consistent.
+    for r in range(pivot_row, n):
+        if aug[r][n] != 0:
+            return None
+    solution = [Fraction(0)] * n
+    for row, col in enumerate(pivot_cols):
+        solution[col] = aug[row][n]
+    return solution
+
+
 def psd_failure_index(matrix: Sequence[Sequence[Fraction]]) -> Optional[int]:
     """Exact PSD test via LDL^T (symmetric Gaussian elimination).
 

@@ -238,14 +238,48 @@ def run_step_smoke() -> bool:
         dict(conditioned, variance_budget="1/2"),
         {"estimate": "95/24", "variance": "61/96", "exceeds_budget": True})
 
-    # Degenerate reference combination: two identical noiseless observations
-    # make H*S*H^T + R singular, so no unique conditional result exists.
-    ok &= check_error(
-        "smoke: degenerate reference combination rejected",
+    # Redundant noiseless reference records: two records with different ids
+    # (r1, r2) that restate the exact same noiseless information.  Their joint
+    # observation covariance H*S*H^T + R is singular, but the records agree,
+    # so the conditional result is unique and equals conditioning on the
+    # single noiseless observation.  This must not be rejected.
+    ok &= check_success(
+        "smoke: duplicate noiseless observations, single input",
+        {
+            "inputs": [{"id": "x", "value": 0, "sensitivity": 1}],
+            "covariance": [[1]],
+            "intercept": 0,
+            "variance_budget": 0,
+            "conditioning": {
+                "observations": [
+                    {"id": "r1", "value": "2", "coefficients": {"x": "1"}},
+                    {"id": "r2", "value": "2", "coefficients": {"x": "1"}},
+                ],
+                "covariance": [["0", "0"], ["0", "0"]],
+            },
+        },
+        {"estimate": "2", "variance": "0", "exceeds_budget": False})
+
+    ok &= check_success(
+        "smoke: redundant noiseless records match single conditioning",
         dict(VALID_PAYLOAD, conditioning={
             "observations": [
                 {"id": "r1", "value": "2", "coefficients": {"x1": "1"}},
                 {"id": "r2", "value": "2", "coefficients": {"x1": "1"}},
+            ],
+            "covariance": [["0", "0"], ["0", "0"]],
+        }),
+        {"estimate": "9/2", "variance": "7/144", "exceeds_budget": False})
+
+    # Truly incompatible degenerate combination: identical noiseless rows with
+    # different observed values contradict each other, so no unique
+    # conditional result exists and the whole request is rejected.
+    ok &= check_error(
+        "smoke: contradictory degenerate observations rejected",
+        dict(VALID_PAYLOAD, conditioning={
+            "observations": [
+                {"id": "r1", "value": "2", "coefficients": {"x1": "1"}},
+                {"id": "r2", "value": "3", "coefficients": {"x1": "1"}},
             ],
             "covariance": [["0", "0"], ["0", "0"]],
         }),

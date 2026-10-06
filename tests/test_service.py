@@ -122,23 +122,79 @@ class ConditionTests(unittest.TestCase):
         )
         self.assertEqual((estimate, variance), (F(41, 12), F(11, 9)))
 
-    def test_duplicate_noiseless_observations_are_singular(self):
-        # Two identical observations with zero noise: M is rank one.
-        self.assertIsNone(self.condition(
+    def test_duplicate_noiseless_observations_are_redundant_not_singular(self):
+        # Two identical noiseless observations carry the same reference
+        # information twice.  M is rank one but the observations agree, so
+        # the conditional result is unique and equals conditioning on a
+        # single such observation:
+        # estimate = 41/12 + (13/24)/(1/4) * (1/2) = 9/2
+        # variance = 11/9 - (13/24)^2/(1/4)     = 7/144
+        estimate, variance = self.condition(
             ref_values=[F(2), F(2)],
             ref_rows=[[F(1), F(0)], [F(1), F(0)]],
             ref_covariance=[[F(0), F(0)], [F(0), F(0)]],
+        )
+        self.assertEqual(estimate, F(9, 2))
+        self.assertEqual(variance, F(7, 144))
+
+        single = self.condition(
+            ref_values=[F(2)],
+            ref_rows=[[F(1), F(0)]],
+            ref_covariance=[[F(0)]],
+        )
+        self.assertEqual((estimate, variance), single)
+
+    def test_scaled_redundant_noiseless_observations_agree(self):
+        # The second record restates the same noiseless information with a
+        # factor of two (row and value both doubled): still compatible.
+        estimate, variance = self.condition(
+            ref_values=[F(2), F(4)],
+            ref_rows=[[F(1), F(0)], [F(2), F(0)]],
+            ref_covariance=[[F(0), F(0)], [F(0), F(0)]],
+        )
+        self.assertEqual(estimate, F(9, 2))
+        self.assertEqual(variance, F(7, 144))
+
+    def test_contradictory_degenerate_observations_are_rejected(self):
+        # Same noiseless direction, different observed values: the duplicate
+        # records contradict each other, so no conditional result exists.
+        self.assertIsNone(self.condition(
+            ref_values=[F(2), F(3)],
+            ref_rows=[[F(1), F(0)], [F(1), F(0)]],
+            ref_covariance=[[F(0), F(0)], [F(0), F(0)]],
+        ))
+        # Scaled records whose values do not obey the same scale likewise.
+        self.assertIsNone(self.condition(
+            ref_values=[F(2), F(3)],
+            ref_rows=[[F(1), F(0)], [F(2), F(0)]],
+            ref_covariance=[[F(0), F(0)], [F(0), F(0)]],
         ))
 
-    def test_noiseless_observation_without_variance_is_singular(self):
-        # x2 has no variance in the direction observed (zero row of S) and
-        # the observation is noiseless, so M = 0.
-        self.assertIsNone(condition(
+    def test_noiseless_observation_at_deterministic_value_is_a_no_op(self):
+        # x has zero prior variance and the noiseless observation equals its
+        # (deterministic) value: M = 0 is singular, but the residual is zero
+        # too, so the request is compatible and leaves the result unchanged.
+        estimate, variance = condition(
             values=[F(1)],
             sensitivities=[F(1)],
             covariance=[[F(0)]],
             intercept=F(0),
             ref_values=[F(1)],
+            ref_rows=[[F(1)]],
+            ref_covariance=[[F(0)]],
+        )
+        self.assertEqual(estimate, F(1))
+        self.assertEqual(variance, F(0))
+
+    def test_noiseless_observation_of_deterministic_value_contradiction(self):
+        # Zero prior variance and zero noise with an observed value differing
+        # from the deterministic value is a genuine contradiction.
+        self.assertIsNone(condition(
+            values=[F(1)],
+            sensitivities=[F(1)],
+            covariance=[[F(0)]],
+            intercept=F(0),
+            ref_values=[F(2)],
             ref_rows=[[F(1)]],
             ref_covariance=[[F(0)]],
         ))

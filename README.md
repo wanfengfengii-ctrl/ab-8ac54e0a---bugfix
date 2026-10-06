@@ -69,9 +69,18 @@ by rounding or tolerance tricks.
 * `covariance` — `m × m` reference noise covariance (R) for the `m`
   observations. Must be exactly symmetric and positive semidefinite.
 
-The joint observation covariance `M = H Σ Hᵀ + R` must be invertible;
-otherwise the reference information does not determine a unique conditional
-result and the whole request is rejected (`CONDITIONING_SINGULAR`). Any
+The joint observation covariance `M = H Σ Hᵀ + R` need **not** be
+invertible: redundant reference records (e.g. the same noiseless reference
+information recorded twice under different ids, or a noiseless observation
+in a direction that already has zero prior variance) make `M` singular but
+still determine a unique conditional result as long as the degenerate
+observations are mutually compatible.  Concretely, the residual
+`z − H x` must lie in the column space of the positive-semidefinite `M`;
+the conditional estimate and variance are then uniquely determined and are
+computed exactly by solving the consistent systems `M u = z − H x` and
+`M w = H Σ c`.  Only when the degenerate observations contradict each
+other (`z − H x` outside `range(M)`, so no unique conditional result
+exists) is the whole request rejected with `CONDITIONING_SINGULAR`. Any
 reference-observation error yields a stable error code and field path and
 never a release verdict.
 
@@ -114,7 +123,7 @@ failed request can never be mistaken for a release decision.
 | `CONDITIONING_DIMENSION_MISMATCH` | Conditioning covariance is not `m × m` for `m` observations |
 | `CONDITIONING_COVARIANCE_NOT_SYMMETRIC` | `conditioning.covariance[i][j] ≠ conditioning.covariance[j][i]` |
 | `CONDITIONING_COVARIANCE_NOT_POSITIVE_SEMIDEFINITE` | Exact LDLᵀ check on the reference noise covariance failed at the reported pivot |
-| `CONDITIONING_SINGULAR` | `H Σ Hᵀ + R` is singular: the reference observations do not determine a unique conditional result |
+| `CONDITIONING_SINGULAR` | A singular `H Σ Hᵀ + R` together with mutually contradictory degenerate observations (`z − H x` outside its column space): the reference observations do not determine a unique conditional result. Merely redundant, mutually consistent records are accepted. |
 | `PAYLOAD_TOO_LARGE` | Body exceeds 1 MiB (HTTP 413) |
 | `METHOD_NOT_ALLOWED` | Wrong HTTP method (HTTP 405) |
 | `NOT_FOUND` | Unknown path (HTTP 404) |

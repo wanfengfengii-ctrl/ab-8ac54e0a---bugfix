@@ -258,8 +258,9 @@ def evaluate_request(obj: Any) -> dict:
             raise ApiError(
                 "CONDITIONING_SINGULAR",
                 "reference observations do not determine a unique "
-                "conditional result (joint observation covariance "
-                "H*S*H^T + R is singular)",
+                "conditional result: the joint observation covariance "
+                "H*S*H^T + R is singular and the degenerate observations "
+                "contradict each other (z - H*x is outside its column space)",
                 "conditioning",
             )
         estimate, variance = result
